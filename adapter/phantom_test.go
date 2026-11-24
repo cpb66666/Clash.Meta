@@ -1327,3 +1327,142 @@ func TestPhantomURIToParseProxyE2E(t *testing.T) {
 	}
 	_ = pc.Close()
 }
+
+func TestVlessRealityMasqueradeToPhantom(t *testing.T) {
+	_, pub, err := phantom.GenerateX25519KeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pubStr := base64.RawURLEncoding.EncodeToString(pub[:])
+	testUUID := "550e8400-e29b-41d4-a716-446655440000"
+
+	// 1. Standard Xboard ClashMeta VLESS+Reality map with lowercase short-id "7068616e" -> C.Phantom.
+	for _, sid := range []string{"7068616e", "7068616E"} {
+		p, err := ParseProxy(map[string]any{
+			"name":       "xboard-phantom-" + sid,
+			"type":       "vless",
+			"server":     "23.144.20.116",
+			"port":       443,
+			"uuid":       testUUID,
+			"udp":        true,
+			"tls":        true,
+			"servername": "www.microsoft.com",
+			"reality-opts": map[string]any{
+				"public-key": pubStr,
+				"short-id":   sid,
+			},
+		})
+		if err != nil {
+			t.Fatalf("ParseProxy VLESS+Reality(%s) failed: %v", sid, err)
+		}
+		if p.Type() != C.Phantom {
+			_ = p.Close()
+			t.Fatalf("expected C.Phantom for short-id %s, got %v", sid, p.Type())
+		}
+		if !p.SupportUDP() {
+			_ = p.Close()
+			t.Fatalf("expected UDP enabled on translated Phantom proxy")
+		}
+		_ = p.Close()
+	}
+
+	// 2. Normal VLESS+Reality with a non-magic short-id remains C.Vless.
+	normalVless, err := ParseProxy(map[string]any{
+		"name":       "normal-reality",
+		"type":       "vless",
+		"server":     "1.2.3.4",
+		"port":       443,
+		"uuid":       testUUID,
+		"tls":        true,
+		"servername": "www.microsoft.com",
+		"reality-opts": map[string]any{
+			"public-key": pubStr,
+			"short-id":   "aabbccdd",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ParseProxy normal VLESS+Reality failed: %v", err)
+	}
+	if normalVless.Type() != C.Vless {
+		_ = normalVless.Close()
+		t.Fatalf("expected C.Vless for normal short-id, got %v", normalVless.Type())
+	}
+	_ = normalVless.Close()
+
+	// 3. vless:// URI with sid=7068616e converts via ConvertsV2Ray -> ParseProxy into C.Phantom.
+	vlessURI := fmt.Sprintf("vless://%s@23.144.20.116:443?security=reality&pbk=%s&sid=7068616e&sni=www.microsoft.com&fp=chrome#VLESS%%20Phantom", testUUID, pubStr)
+	sub := base64.StdEncoding.EncodeToString([]byte(vlessURI))
+	mappings, err := convert.ConvertsV2Ray([]byte(sub))
+	if err != nil || len(mappings) != 1 {
+		t.Fatalf("ConvertsV2Ray failed: mappings=%d err=%v", len(mappings), err)
+	}
+	uriProxy, err := ParseProxy(mappings[0])
+	if err != nil {
+		t.Fatalf("ParseProxy from vless URI failed: %v", err)
+	}
+	defer uriProxy.Close()
+	if uriProxy.Type() != C.Phantom || uriProxy.Name() != "VLESS Phantom" {
+		t.Fatalf("unexpected converted URI proxy: type=%v name=%q", uriProxy.Type(), uriProxy.Name())
+	}
+
+	// 4. End-to-end TCP roundtrip via translated VLESS+Reality proxy against local Phantom server using DeriveUserID.
+	echoLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echoLn.Close()
+	go func() {
+		for {
+			c, err := echoLn.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				_, _ = io.Copy(conn, conn)
+			}(c)
+		}
+	}()
+	tcpHost, tcpPortStr, _ := net.SplitHostPort(echoLn.Addr().String())
+	tcpPort, _ := strconv.Atoi(tcpPortStr)
+
+	derivedID := phantom.DeriveUserID(testUUID)
+	srv := startLocalPhantomServer(t, derivedID, testUUID)
+	srvHost, srvPortStr, _ := net.SplitHostPort(srv.ln.Addr().String())
+	srvPort, _ := strconv.Atoi(srvPortStr)
+	srvPubStr := base64.RawURLEncoding.EncodeToString(srv.pub[:])
+
+	e2eProxy, err := ParseProxy(map[string]any{
+		"name":       "e2e-vless-phantom",
+		"type":       "vless",
+		"server":     srvHost,
+		"port":       srvPort,
+		"uuid":       testUUID,
+		"udp":        true,
+		"tls":        true,
+		"servername": "www.microsoft.com",
+		"reality-opts": map[string]any{
+			"public-key": srvPubStr,
+			"short-id":   "7068616e",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ParseProxy E2E VLESS+Reality failed: %v", err)
+	}
+	defer e2eProxy.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	c, err := e2eProxy.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(tcpHost), DstPort: uint16(tcpPort)})
+	if err != nil {
+		t.Fatalf("E2E TCP DialContext failed: %v", err)
+	}
+	if _, err := c.Write([]byte("vless-reality-phantom-ok")); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]byte, len("vless-reality-phantom-ok"))
+	if _, err := io.ReadFull(c, got); err != nil || string(got) != "vless-reality-phantom-ok" {
+		t.Fatalf("E2E echo mismatch: %q err=%v", got, err)
+	}
+	_ = c.Close()
+}

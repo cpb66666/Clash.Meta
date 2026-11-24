@@ -155,6 +155,41 @@ func NewPhantom(option PhantomOption) (*Phantom, error) {
 	return outbound, nil
 }
 
+// PhantomRealityShortID is the magic Reality short-id used to auto-translate Xboard VLESS+Reality
+// subscriptions into PhantomTLS outbounds without modifying the Xboard panel.
+const PhantomRealityShortID = "7068616e"
+
+// IsPhantomRealityVless reports whether a parsed VLESS option carries PhantomTLS's magic short-id.
+func IsPhantomRealityVless(option *VlessOption) bool {
+	if option == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(option.RealityOpts.ShortID), PhantomRealityShortID) &&
+		strings.TrimSpace(option.RealityOpts.PublicKey) != ""
+}
+
+// NewPhantomFromVless translates a zero-modification Xboard VLESS+Reality option into a Phantom outbound.
+func NewPhantomFromVless(option VlessOption) (*Phantom, error) {
+	if strings.TrimSpace(option.UUID) == "" {
+		return nil, errors.New("phantom vless-reality requires uuid")
+	}
+	var sniVal any
+	if sni := strings.TrimSpace(option.ServerName); sni != "" {
+		sniVal = sni
+	}
+	return NewPhantom(PhantomOption{
+		BasicOption: option.BasicOption,
+		Name:        option.Name,
+		Server:      option.Server,
+		Port:        option.Port,
+		UserID:      phantom.DeriveUserID(option.UUID),
+		Secret:      option.UUID,
+		PublicKey:   option.RealityOpts.PublicKey,
+		SNI:         sniVal,
+		UDP:         option.UDP,
+	})
+}
+
 func buildPhantomTargetHeader(cmd byte, metadata *C.Metadata) (phantom.RequestHeader, error) {
 	if metadata == nil || !metadata.Valid() || metadata.DstPort == 0 {
 		return phantom.RequestHeader{}, errors.New("phantom invalid target metadata")

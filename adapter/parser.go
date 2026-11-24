@@ -67,6 +67,10 @@ func ParseProxy(mapping map[string]any) (C.Proxy, error) {
 		if err != nil {
 			break
 		}
+		if outbound.IsPhantomRealityVless(vlessOption) {
+			proxy, err = outbound.NewPhantomFromVless(*vlessOption)
+			break
+		}
 		proxy, err = outbound.NewVless(*vlessOption)
 	case "snell":
 		snellOption := &outbound.SnellOption{}

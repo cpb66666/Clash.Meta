@@ -96,6 +96,17 @@ func EncodeKey(k [32]byte) string {
 	return base64.RawURLEncoding.EncodeToString(k[:])
 }
 
+// DeriveUserID deterministically derives a non-zero 32-bit wire UserID from a user secret/UUID.
+// Used for zero-modification Xboard subscriptions (e.g. VLESS+Reality) that only carry UUID.
+func DeriveUserID(secret string) uint32 {
+	sum := sha256.Sum256([]byte("phantom-uid-v1:" + secret))
+	id := binary.BigEndian.Uint32(sum[0:4])
+	if id == 0 {
+		return 1
+	}
+	return id
+}
+
 // DecodeKey decodes a 32-byte X25519 key from hex (64 chars), raw/padded URL-safe base64,
 // or raw/padded standard base64.
 func DecodeKey(s string) ([32]byte, error) {
