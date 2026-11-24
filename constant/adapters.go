@@ -44,6 +44,7 @@ const (
 	Ssh
 	Mieru
 	AnyTLS
+	Phantom
 )
 
 const (
@@ -234,6 +235,8 @@ func (at AdapterType) String() string {
 		return "Mieru"
 	case AnyTLS:
 		return "AnyTLS"
+	case Phantom:
+		return "Phantom"
 	case Relay:
 		return "Relay"
 	case Selector:

@@ -152,6 +152,13 @@ func ParseProxy(mapping map[string]any) (C.Proxy, error) {
 			break
 		}
 		proxy, err = outbound.NewAnyTLS(*anytlsOption)
+	case "phantom":
+		phantomOption := &outbound.PhantomOption{}
+		err = decoder.Decode(mapping, phantomOption)
+		if err != nil {
+			break
+		}
+		proxy, err = outbound.NewPhantom(*phantomOption)
 	default:
 		return nil, fmt.Errorf("unsupport proxy type: %s", proxyType)
 	}

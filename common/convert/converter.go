@@ -34,6 +34,93 @@ func ConvertsV2Ray(buf []byte) ([]map[string]any, error) {
 
 		scheme = strings.ToLower(scheme)
 		switch scheme {
+		case "phantom":
+			urlPhantom, err := url.Parse(line)
+			if err != nil || urlPhantom.User == nil {
+				continue
+			}
+			uidStr := urlPhantom.User.Username()
+			uid, err := strconv.ParseUint(uidStr, 10, 32)
+			if err != nil || uid == 0 {
+				continue
+			}
+			secret, hasSecret := urlPhantom.User.Password()
+			if !hasSecret || secret == "" {
+				continue
+			}
+			server := urlPhantom.Hostname()
+			if server == "" {
+				continue
+			}
+			port := urlPhantom.Port()
+			if port == "" {
+				port = "443"
+			} else {
+				pNum, err := strconv.ParseUint(port, 10, 16)
+				if err != nil || pNum == 0 {
+					continue
+				}
+			}
+
+			query := urlPhantom.Query()
+			pub := strings.TrimSpace(query.Get("pub"))
+			if pub == "" {
+				continue
+			}
+
+			rawName := urlPhantom.Fragment
+			if rawName == "" {
+				rawName = server + ":" + port
+			}
+			name := uniqueName(names, rawName)
+
+			phantomProxy := make(map[string]any, 12)
+			phantomProxy["name"] = name
+			phantomProxy["type"] = "phantom"
+			phantomProxy["server"] = server
+			phantomProxy["port"] = port
+			phantomProxy["user-id"] = uint32(uid)
+			phantomProxy["secret"] = secret
+			phantomProxy["public-key"] = pub
+			phantomProxy["udp"] = true
+
+			if sniRaw := query.Get("sni"); sniRaw != "" {
+				var sniList []string
+				for _, part := range strings.Split(sniRaw, ",") {
+					if s := strings.TrimSpace(part); s != "" {
+						sniList = append(sniList, s)
+					}
+				}
+				if len(sniList) > 0 {
+					phantomProxy["sni"] = sniList
+				}
+			}
+			if minStr := query.Get("min-idle"); minStr != "" {
+				if n, err := strconv.Atoi(minStr); err == nil && n >= 0 {
+					phantomProxy["min-idle"] = n
+				}
+			} else if minStr := query.Get("min_idle"); minStr != "" {
+				if n, err := strconv.Atoi(minStr); err == nil && n >= 0 {
+					phantomProxy["min-idle"] = n
+				}
+			}
+			if maxStr := query.Get("max-idle"); maxStr != "" {
+				if n, err := strconv.Atoi(maxStr); err == nil && n > 0 {
+					phantomProxy["max-idle"] = n
+				}
+			} else if maxStr := query.Get("max_idle"); maxStr != "" {
+				if n, err := strconv.Atoi(maxStr); err == nil && n > 0 {
+					phantomProxy["max-idle"] = n
+				}
+			}
+			if udpStr := query.Get("udp"); udpStr != "" {
+				if b, err := strconv.ParseBool(udpStr); err == nil {
+					phantomProxy["udp"] = b
+				}
+			}
+
+			proxies = append(proxies, phantomProxy)
+
 		case "hysteria":
 			urlHysteria, err := url.Parse(line)
 			if err != nil {
